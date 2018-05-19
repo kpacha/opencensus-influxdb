@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,44 +25,40 @@ func TestExporter_ExportView_DistributionData(t *testing.T) {
 
 	view.SetReportingPeriod(time.Second)
 
-	var once sync.Once
-
 	e := &Exporter{
 		opts: Options{},
 		client: &dummyClient{
 			WriteFunc: func(bp client.BatchPoints) error {
-				once.Do(func() {
-					if len(bp.Points()) != 1 {
-						t.Errorf("unexpected number of points: %d", len(bp.Points()))
-						return
+				if len(bp.Points()) != 1 {
+					t.Errorf("unexpected number of points: %d", len(bp.Points()))
+					return nil
+				}
+				for _, v := range bp.Points() {
+					if name := v.Name(); name != "my.org/views/video_size" {
+						t.Errorf("unexpected point name: %s", name)
+						return nil
 					}
-					for _, v := range bp.Points() {
-						if name := v.Name(); name != "my.org/views/video_size" {
-							t.Errorf("unexpected point name: %s", name)
-							return
-						}
-						if len(v.Tags()) != 1 {
-							t.Errorf("unexpected number of tags: %d", len(v.Tags()))
-							return
-						}
-						if !reflect.DeepEqual(v.Tags(), map[string]string{
-							"my.org/keys/frontend": "mobile-ios9.3.5",
-						}) {
-							t.Errorf("unexpected tag values: %v", v.Tags())
-							return
-						}
-						fields, _ := v.Fields()
-						if min := fields["min"].(float64); min != 2564 {
-							t.Errorf("unexpected field values: %v", fields)
-							return
-						}
-						if count := fields["count"].(int64); count != 10 {
-							t.Errorf("unexpected field values: %v", fields)
-							return
-						}
+					if len(v.Tags()) != 1 {
+						t.Errorf("unexpected number of tags: %d", len(v.Tags()))
+						return nil
+					}
+					if !reflect.DeepEqual(v.Tags(), map[string]string{
+						"my.org/keys/frontend": "mobile-ios9.3.5",
+					}) {
+						t.Errorf("unexpected tag values: %v", v.Tags())
+						return nil
+					}
+					fields, _ := v.Fields()
+					if min := fields["min"].(float64); min != 2564 {
+						t.Errorf("unexpected field values: %v", fields)
+						return nil
+					}
+					if count := fields["count"].(int64); count != 10 {
+						t.Errorf("unexpected field values: %v", fields)
+						return nil
+					}
 
-					}
-				})
+				}
 				return nil
 			},
 			PingFunc: func(timeout time.Duration) (time.Duration, string, error) {
