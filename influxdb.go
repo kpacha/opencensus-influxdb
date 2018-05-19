@@ -1,12 +1,19 @@
 package influxdb
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	client "github.com/influxdata/influxdb/client/v2"
 	"go.opencensus.io/stats/view"
+)
+
+const (
+	defaultBufferSize      = 1000 * 1000
+	defaultReportingPeriod = 15 * time.Second
 )
 
 // Options contains options for configuring the exporter.
@@ -31,6 +38,12 @@ type Options struct {
 	// Database is the database to write points to.
 	Database string
 
+	// BufferSize is the capacity of the buffer of batch points to send.
+	BufferSize int
+
+	// ReportingPeriod is the duration between two consecutive reports.
+	ReportingPeriod time.Duration
+
 	// OnError is the hook to be called when there is
 	// an error occurred when uploading the stats data.
 	// If no custom hook is set, errors are logged.
@@ -53,18 +66,29 @@ func NewExporter(o Options) (*Exporter, error) {
 		log.Printf("Error when uploading stats to Influx: %s", err.Error())
 	}
 
-	return &Exporter{
+	e := &Exporter{
 		opts:    o,
 		client:  c,
+		buffer:  newBuffer(o.BufferSize),
 		onError: onError,
-	}, nil
+	}
+
+	reportingPeriod := o.ReportingPeriod
+	if reportingPeriod <= 0 {
+		reportingPeriod = defaultReportingPeriod
+	}
+
+	go e.flushBuffer(context.Background(), time.NewTicker(reportingPeriod))
+
+	return e, nil
 }
 
 // Exporter exports stats to Influxdb
 type Exporter struct {
 	opts    Options
 	client  Client
-	onError func(err error)
+	buffer  *buffer
+	onError func(error)
 }
 
 // ExportView exports to the Influx if view data has one or more rows.
@@ -74,10 +98,30 @@ func (e *Exporter) ExportView(vd *view.Data) {
 	}
 
 	bp := e.batch()
-	bp.AddPoints(toPoints(vd))
+	bp.AddPoints(viewToPoints(vd))
 
-	if err := e.client.Write(bp); err != nil {
-		e.onError(exportError{err, bp})
+	e.buffer.Add(bp)
+}
+
+func (e *Exporter) flushBuffer(ctx context.Context, ticker *time.Ticker) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			bps := e.buffer.Elements()
+			if len(bps) == 0 {
+				continue
+			}
+			bp := e.batch()
+			for _, b := range bps {
+				bp.AddPoints(b.Points())
+			}
+			if err := e.client.Write(bp); err != nil {
+				e.buffer.Add(bps...)
+				e.onError(exportError{err, bp})
+			}
+		}
 	}
 }
 
@@ -89,14 +133,14 @@ func (e *Exporter) batch() client.BatchPoints {
 	return bp
 }
 
-func toPoints(vd *view.Data) []*client.Point {
+func viewToPoints(vd *view.Data) []*client.Point {
 	pts := []*client.Point{}
 	for _, row := range vd.Rows {
 		f, err := toFields(row)
 		if err != nil {
 			continue
 		}
-		p, err := client.NewPoint(vd.View.Name, toTags(row), f)
+		p, err := client.NewPoint(vd.View.Name, toTags(row), f, vd.End)
 		if err != nil {
 			continue
 		}
@@ -105,7 +149,7 @@ func toPoints(vd *view.Data) []*client.Point {
 		if !ok {
 			continue
 		}
-		buckets, err := client.NewPoint(vd.View.Name+"_buckets", toTags(row), parseBuckets(vd.View, data))
+		buckets, err := client.NewPoint(vd.View.Name+"_buckets", toTags(row), parseBuckets(vd.View, data), vd.End)
 		if err != nil {
 			continue
 		}
@@ -161,7 +205,9 @@ func parseBuckets(v *view.View, data *view.DistributionData) map[string]interfac
 		}
 	}
 	for _, b := range buckets {
-		res[fmt.Sprintf("%.0f", b)] = uint64(data.CountPerBucket[indicesMap[b]])
+		if v := data.CountPerBucket[indicesMap[b]]; v != 0 {
+			res[fmt.Sprintf("%.0f", b)] = v
+		}
 	}
 
 	return res
@@ -201,4 +247,38 @@ type exportError struct {
 
 func (e exportError) Error() string {
 	return e.err.Error()
+}
+
+func newBuffer(size int) *buffer {
+	if size == 0 {
+		size = defaultBufferSize
+	}
+	return &buffer{
+		data: []client.BatchPoints{},
+		size: size,
+		mu:   new(sync.Mutex),
+	}
+}
+
+type buffer struct {
+	data []client.BatchPoints
+	size int
+	mu   *sync.Mutex
+}
+
+func (b *buffer) Add(ps ...client.BatchPoints) {
+	b.mu.Lock()
+	b.data = append(b.data, ps...)
+	if len(b.data) > b.size {
+		b.data = b.data[len(b.data)-b.size:]
+	}
+	b.mu.Unlock()
+}
+
+func (b *buffer) Elements() []client.BatchPoints {
+	var res []client.BatchPoints
+	b.mu.Lock()
+	res, b.data = b.data, []client.BatchPoints{}
+	b.mu.Unlock()
+	return res
 }

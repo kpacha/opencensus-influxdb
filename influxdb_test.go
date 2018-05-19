@@ -26,7 +26,8 @@ func TestExporter_ExportView_DistributionData(t *testing.T) {
 	view.SetReportingPeriod(time.Second)
 
 	e := &Exporter{
-		opts: Options{},
+		opts:   Options{},
+		buffer: newBuffer(100),
 		client: &dummyClient{
 			WriteFunc: func(bp client.BatchPoints) error {
 				if len(bp.Points()) != 2 {
@@ -112,7 +113,8 @@ func TestExporter_ExportView_CountData(t *testing.T) {
 	view.SetReportingPeriod(time.Second)
 
 	e := &Exporter{
-		opts: Options{},
+		opts:   Options{},
+		buffer: newBuffer(100),
 		client: &dummyClient{
 			WriteFunc: func(bp client.BatchPoints) error {
 				if len(bp.Points()) != 1 {
@@ -191,7 +193,8 @@ func TestExporter_ExportView_SumData(t *testing.T) {
 	view.SetReportingPeriod(time.Second)
 
 	e := &Exporter{
-		opts: Options{},
+		opts:   Options{},
+		buffer: newBuffer(100),
 		client: &dummyClient{
 			WriteFunc: func(bp client.BatchPoints) error {
 				if len(bp.Points()) != 1 {
@@ -270,7 +273,8 @@ func TestExporter_ExportView_LastValueData(t *testing.T) {
 	view.SetReportingPeriod(time.Second)
 
 	e := &Exporter{
-		opts: Options{},
+		opts:   Options{},
+		buffer: newBuffer(100),
 		client: &dummyClient{
 			WriteFunc: func(bp client.BatchPoints) error {
 				if len(bp.Points()) != 1 {
@@ -354,6 +358,7 @@ func TestExporter_ExportView_clientError(t *testing.T) {
 		opts: Options{
 			Database: "db",
 		},
+		buffer: newBuffer(100),
 		client: &dummyClient{
 			WriteFunc: func(bp client.BatchPoints) error {
 				return expectedErr
@@ -389,6 +394,9 @@ func TestExporter_ExportView_clientError(t *testing.T) {
 			Aggregation: view.LastValue(),
 		},
 	})
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	e.flushBuffer(ctx, time.NewTicker(time.Millisecond))
 	if !isErrFuncCalled {
 		t.Error("error func not called")
 	}
@@ -440,6 +448,9 @@ func TestExporter_new(t *testing.T) {
 			Aggregation: view.LastValue(),
 		},
 	})
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	e.flushBuffer(ctx, time.NewTicker(time.Millisecond))
 	if !isErrFuncCalled {
 		t.Error("error func not called")
 	}
@@ -478,6 +489,9 @@ func TestExporter_new_defaultOnError(t *testing.T) {
 			Aggregation: view.LastValue(),
 		},
 	})
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	e.flushBuffer(ctx, time.NewTicker(time.Millisecond))
 	if logContent := buf.String(); logContent == "" {
 		t.Error("error func not called")
 	}
