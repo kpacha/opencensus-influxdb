@@ -3,7 +3,7 @@ DEP_VERSION=0.4.1
 OS := $(shell uname | tr '[:upper:]' '[:lower:]')
 VERSION :=0.4.2
 
-all: deps test build
+all: deps test
 
 prepare:
 	@echo "Installing dep..."
@@ -20,6 +20,3 @@ deps:
 
 test:
 	go test -v -cover
-
-build:
-	@go build ./example
