@@ -360,10 +360,18 @@ func TestExporter_ExportView_clientError(t *testing.T) {
 				return 0, "", nil
 			},
 		},
-		onError: func(err error, bp client.BatchPoints) {
+		onError: func(err error) {
 			isErrFuncCalled = true
-			if err != expectedErr {
-				t.Errorf("unexpected error %v", err)
+			expErr, ok := err.(exportError)
+			if !ok {
+				t.Errorf("unexpected error type: %v", err)
+				return
+			}
+			if expErr.err != expectedErr {
+				t.Errorf("unexpected error %v", expErr.err)
+			}
+			if expErr.bp == nil {
+				t.Errorf("unexpected error details %v", expErr.bp)
 			}
 		},
 	}
@@ -390,10 +398,18 @@ func TestExporter_new(t *testing.T) {
 	e, err := NewExporter(Options{
 		Database: "db",
 		Address:  "http://example.tld",
-		OnError: func(err error, bp client.BatchPoints) {
+		OnError: func(err error) {
 			isErrFuncCalled = true
-			if err != expectedErr {
-				t.Errorf("unexpected error %v", err)
+			expErr, ok := err.(exportError)
+			if !ok {
+				t.Errorf("unexpected error type: %v", err)
+				return
+			}
+			if expErr.err != expectedErr {
+				t.Errorf("unexpected error %v", expErr.err)
+			}
+			if expErr.bp == nil {
+				t.Errorf("unexpected error details %v", expErr.bp)
 			}
 		},
 	})
