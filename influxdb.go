@@ -110,7 +110,7 @@ func (e *Exporter) ExportView(vd *view.Data) {
 	}
 
 	bp := e.batch()
-	bp.AddPoints(viewToPoints(vd))
+	bp.AddPoints(e.viewToPoints(vd))
 
 	e.buffer.Add(bp)
 }
