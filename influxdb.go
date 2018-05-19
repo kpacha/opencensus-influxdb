@@ -1,3 +1,6 @@
+// Package influxdb contains a view exporter for InfluxDB.
+//
+// Please note that this exporter is currently work in progress and not complete.
 package influxdb
 
 import (
@@ -38,6 +41,9 @@ type Options struct {
 	// Database is the database to write points to.
 	Database string
 
+	// InstanceName is the name of the node writing the points.
+	InstanceName string
+
 	// BufferSize is the capacity of the buffer of batch points to send.
 	BufferSize int
 
@@ -51,7 +57,8 @@ type Options struct {
 	OnError func(err error)
 }
 
-// NewExporter returns an exporter that exports stats to Influx.
+// NewExporter returns an implementation of view.Exporter that uploads datapoints
+// to an InfluxDB server.
 func NewExporter(o Options) (*Exporter, error) {
 	c, err := newClient(o)
 	if err != nil {
@@ -83,7 +90,8 @@ func NewExporter(o Options) (*Exporter, error) {
 	return e, nil
 }
 
-// Exporter exports stats to Influxdb
+// Exporter is an implementation of view.Exporter that uploads stats to an
+// InfluxDB server.
 type Exporter struct {
 	opts    Options
 	client  Client
@@ -91,7 +99,11 @@ type Exporter struct {
 	onError func(error)
 }
 
-// ExportView exports to the Influx if view data has one or more rows.
+var _ view.Exporter = (*Exporter)(nil)
+
+// ExportView processes the received view if its data has one or more rows. The
+// generated points are added to the internal buffer for later exporting to
+// InfluxDB
 func (e *Exporter) ExportView(vd *view.Data) {
 	if len(vd.Rows) == 0 {
 		return
@@ -133,14 +145,14 @@ func (e *Exporter) batch() client.BatchPoints {
 	return bp
 }
 
-func viewToPoints(vd *view.Data) []*client.Point {
+func (e *Exporter) viewToPoints(vd *view.Data) []*client.Point {
 	pts := []*client.Point{}
 	for _, row := range vd.Rows {
-		f, err := toFields(row)
+		f, err := e.toFields(row)
 		if err != nil {
 			continue
 		}
-		p, err := client.NewPoint(vd.View.Name, toTags(row), f, vd.End)
+		p, err := client.NewPoint(vd.View.Name, e.toTags(row), f, vd.End)
 		if err != nil {
 			continue
 		}
@@ -149,24 +161,21 @@ func viewToPoints(vd *view.Data) []*client.Point {
 		if !ok {
 			continue
 		}
-		buckets, err := client.NewPoint(vd.View.Name+"_buckets", toTags(row), parseBuckets(vd.View, data), vd.End)
-		if err != nil {
-			continue
-		}
-		pts = append(pts, buckets)
+		pts = append(pts, e.parseBuckets(vd.View, data, vd.End)...)
 	}
 	return pts
 }
 
-func toTags(row *view.Row) map[string]string {
-	res := make(map[string]string, len(row.Tags))
+func (e *Exporter) toTags(row *view.Row) map[string]string {
+	res := make(map[string]string, len(row.Tags)+1)
 	for _, tag := range row.Tags {
 		res[tag.Key.Name()] = tag.Value
 	}
+	res["instance"] = e.opts.InstanceName
 	return res
 }
 
-func toFields(row *view.Row) (map[string]interface{}, error) {
+func (e *Exporter) toFields(row *view.Row) (map[string]interface{}, error) {
 	switch data := row.Data.(type) {
 	case *view.CountData:
 		return map[string]interface{}{"count": data.Value}, nil
@@ -193,8 +202,8 @@ func toFields(row *view.Row) (map[string]interface{}, error) {
 	}
 }
 
-func parseBuckets(v *view.View, data *view.DistributionData) map[string]interface{} {
-	res := make(map[string]interface{}, len(v.Aggregation.Buckets))
+func (e *Exporter) parseBuckets(v *view.View, data *view.DistributionData, timestamp time.Time) []*client.Point {
+	res := []*client.Point{}
 
 	indicesMap := make(map[float64]int)
 	buckets := make([]float64, 0, len(v.Aggregation.Buckets))
@@ -205,8 +214,20 @@ func parseBuckets(v *view.View, data *view.DistributionData) map[string]interfac
 		}
 	}
 	for _, b := range buckets {
-		if v := data.CountPerBucket[indicesMap[b]]; v != 0 {
-			res[fmt.Sprintf("%.0f", b)] = v
+		if value := data.CountPerBucket[indicesMap[b]]; value != 0 {
+			pt, err := client.NewPoint(
+				v.Name+"_buckets",
+				map[string]string{
+					"bucket":   fmt.Sprintf("%.0f", b),
+					"instance": e.opts.InstanceName,
+				},
+				map[string]interface{}{"count": value},
+				timestamp,
+			)
+			if err != nil {
+				continue
+			}
+			res = append(res, pt)
 		}
 	}
 
