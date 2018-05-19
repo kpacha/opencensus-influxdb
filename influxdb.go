@@ -92,11 +92,24 @@ func (e *Exporter) batch() client.BatchPoints {
 func toPoints(vd *view.Data) []*client.Point {
 	pts := []*client.Point{}
 	for _, row := range vd.Rows {
-		p, err := client.NewPoint(vd.View.Name, toTags(row), toFields(vd.View, row))
+		f, err := toFields(row)
+		if err != nil {
+			continue
+		}
+		p, err := client.NewPoint(vd.View.Name, toTags(row), f)
 		if err != nil {
 			continue
 		}
 		pts = append(pts, p)
+		data, ok := row.Data.(*view.DistributionData)
+		if !ok {
+			continue
+		}
+		buckets, err := client.NewPoint(vd.View.Name+"_buckets", toTags(row), parseBuckets(vd.View, data))
+		if err != nil {
+			continue
+		}
+		pts = append(pts, buckets)
 	}
 	return pts
 }
@@ -109,44 +122,49 @@ func toTags(row *view.Row) map[string]string {
 	return res
 }
 
-func toFields(v *view.View, row *view.Row) map[string]interface{} {
+func toFields(row *view.Row) (map[string]interface{}, error) {
 	switch data := row.Data.(type) {
 	case *view.CountData:
-		return map[string]interface{}{"count": data.Value}
+		return map[string]interface{}{"count": data.Value}, nil
 
 	case *view.SumData:
-		return map[string]interface{}{"sum": data.Value}
+		return map[string]interface{}{"sum": data.Value}, nil
 
 	case *view.LastValueData:
-		return map[string]interface{}{"last": data.Value}
+		return map[string]interface{}{"last": data.Value}, nil
 
 	case *view.DistributionData:
-		res := map[string]interface{}{
+		return map[string]interface{}{
 			"sum":   data.Sum(),
 			"count": data.Count,
 			"max":   data.Max,
 			"min":   data.Min,
 			"mean":  data.Mean,
-		}
-
-		indicesMap := make(map[float64]int)
-		buckets := make([]float64, 0, len(v.Aggregation.Buckets))
-		for i, b := range v.Aggregation.Buckets {
-			if _, ok := indicesMap[b]; !ok {
-				indicesMap[b] = i
-				buckets = append(buckets, b)
-			}
-		}
-		for _, b := range buckets {
-			res[fmt.Sprintf("bucket_%.2f", b)] = uint64(data.CountPerBucket[indicesMap[b]])
-		}
-
-		return res
+		}, nil
 
 	default:
-		log.Printf("aggregation %T is not yet supported", v.Aggregation)
-		return map[string]interface{}{}
+		err := fmt.Errorf("aggregation %T is not yet supported", data)
+		log.Print(err)
+		return map[string]interface{}{}, err
 	}
+}
+
+func parseBuckets(v *view.View, data *view.DistributionData) map[string]interface{} {
+	res := make(map[string]interface{}, len(v.Aggregation.Buckets))
+
+	indicesMap := make(map[float64]int)
+	buckets := make([]float64, 0, len(v.Aggregation.Buckets))
+	for i, b := range v.Aggregation.Buckets {
+		if _, ok := indicesMap[b]; !ok {
+			indicesMap[b] = i
+			buckets = append(buckets, b)
+		}
+	}
+	for _, b := range buckets {
+		res[fmt.Sprintf("%.0f", b)] = uint64(data.CountPerBucket[indicesMap[b]])
+	}
+
+	return res
 }
 
 // Client defines the interface of the influxdb client to be used

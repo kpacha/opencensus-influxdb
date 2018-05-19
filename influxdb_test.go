@@ -29,35 +29,37 @@ func TestExporter_ExportView_DistributionData(t *testing.T) {
 		opts: Options{},
 		client: &dummyClient{
 			WriteFunc: func(bp client.BatchPoints) error {
-				if len(bp.Points()) != 1 {
+				if len(bp.Points()) != 2 {
 					t.Errorf("unexpected number of points: %d", len(bp.Points()))
 					return nil
 				}
 				for _, v := range bp.Points() {
-					if name := v.Name(); name != "my.org/views/video_size" {
-						t.Errorf("unexpected point name: %s", name)
+					switch v.Name() {
+					case "my.org/views/video_size":
+						if len(v.Tags()) != 1 {
+							t.Errorf("unexpected number of tags: %d", len(v.Tags()))
+							return nil
+						}
+						if !reflect.DeepEqual(v.Tags(), map[string]string{
+							"my.org/keys/frontend": "mobile-ios9.3.5",
+						}) {
+							t.Errorf("unexpected tag values: %v", v.Tags())
+							return nil
+						}
+						fields, _ := v.Fields()
+						if min := fields["min"].(float64); min != 2564 {
+							t.Errorf("unexpected field values: %v", fields)
+							return nil
+						}
+						if count := fields["count"].(int64); count != 10 {
+							t.Errorf("unexpected field values: %v", fields)
+							return nil
+						}
+					case "my.org/views/video_size_buckets":
+					default:
+						t.Errorf("unexpected point name: %s", v.Name())
 						return nil
 					}
-					if len(v.Tags()) != 1 {
-						t.Errorf("unexpected number of tags: %d", len(v.Tags()))
-						return nil
-					}
-					if !reflect.DeepEqual(v.Tags(), map[string]string{
-						"my.org/keys/frontend": "mobile-ios9.3.5",
-					}) {
-						t.Errorf("unexpected tag values: %v", v.Tags())
-						return nil
-					}
-					fields, _ := v.Fields()
-					if min := fields["min"].(float64); min != 2564 {
-						t.Errorf("unexpected field values: %v", fields)
-						return nil
-					}
-					if count := fields["count"].(int64); count != 10 {
-						t.Errorf("unexpected field values: %v", fields)
-						return nil
-					}
-
 				}
 				return nil
 			},
