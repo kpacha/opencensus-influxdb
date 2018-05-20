@@ -405,7 +405,7 @@ func TestExporter_ExportView_clientError(t *testing.T) {
 func TestExporter_new(t *testing.T) {
 	var isErrFuncCalled bool
 	expectedErr := errors.New("expect me")
-	e, err := NewExporter(Options{
+	e, err := NewExporter(context.Background(), Options{
 		Database: "db",
 		Address:  "http://example.tld",
 		OnError: func(err error) {
@@ -460,7 +460,7 @@ func TestExporter_new_defaultOnError(t *testing.T) {
 	expectedErr := errors.New("expect me")
 	buf := new(bytes.Buffer)
 	log.SetOutput(buf)
-	e, err := NewExporter(Options{
+	e, err := NewExporter(context.Background(), Options{
 		Database: "db",
 		Address:  "http://example.tld",
 	})
@@ -498,7 +498,7 @@ func TestExporter_new_defaultOnError(t *testing.T) {
 }
 
 func TestExporter_new_wrongClient(t *testing.T) {
-	_, err := NewExporter(Options{
+	_, err := NewExporter(context.Background(), Options{
 		Database: "db",
 	})
 	if err == nil {

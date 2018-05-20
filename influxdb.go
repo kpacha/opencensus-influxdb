@@ -59,7 +59,7 @@ type Options struct {
 
 // NewExporter returns an implementation of view.Exporter that uploads datapoints
 // to an InfluxDB server.
-func NewExporter(o Options) (*Exporter, error) {
+func NewExporter(ctx context.Context, o Options) (*Exporter, error) {
 	c, err := newClient(o)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func NewExporter(o Options) (*Exporter, error) {
 		reportingPeriod = defaultReportingPeriod
 	}
 
-	go e.flushBuffer(context.Background(), time.NewTicker(reportingPeriod))
+	go e.flushBuffer(ctx, time.NewTicker(reportingPeriod))
 
 	return e, nil
 }
